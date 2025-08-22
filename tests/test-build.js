@@ -6,8 +6,8 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Test the caddy_dev_server tool
-const serverPath = path.join(__dirname, 'dist/index.js');
+// Test the caddy_build_plugin tool
+const serverPath = path.join(__dirname, '../dist/index.js');
 
 const server = spawn('node', [serverPath], {
   stdio: ['pipe', 'pipe', 'pipe']
@@ -52,14 +52,13 @@ sendMessage('initialize', {
   clientInfo: { name: 'test-client', version: '1.0.0' }
 });
 
-// Test dev server setup
+// Test building the plugin
 setTimeout(() => {
   sendMessage('tools/call', {
-    name: 'caddy_dev_server',
+    name: 'caddy_build_plugin',
     arguments: {
-      caddy_binary: './caddy-with-visitor-counter',
-      config_file: './caddy-plugins/visitor-counter/Caddyfile.example',
-      port: 8080
+      plugin_path: './examples/caddy-plugins/visitor-counter',
+      output_path: './caddy-with-visitor-counter'
     }
   });
 }, 200);
@@ -67,4 +66,4 @@ setTimeout(() => {
 setTimeout(() => {
   server.kill();
   process.exit(0);
-}, 2000);
+}, 3000);

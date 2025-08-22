@@ -6,8 +6,8 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Test the caddy_create_plugin tool
-const serverPath = path.join(__dirname, 'dist/index.js');
+// Test the caddy_dev_server tool
+const serverPath = path.join(__dirname, '../dist/index.js');
 
 const server = spawn('node', [serverPath], {
   stdio: ['pipe', 'pipe', 'pipe']
@@ -23,7 +23,7 @@ function sendMessage(method, params) {
     params
   };
   
-  console.log('Sending:', JSON.stringify(message));
+  console.log('Sending:', JSON.stringify(message, null, 2));
   server.stdin.write(JSON.stringify(message) + '\n');
 }
 
@@ -52,21 +52,14 @@ sendMessage('initialize', {
   clientInfo: { name: 'test-client', version: '1.0.0' }
 });
 
-// List available tools
-setTimeout(() => {
-  sendMessage('tools/list', {});
-}, 100);
-
-// Create a plugin
+// Test dev server setup
 setTimeout(() => {
   sendMessage('tools/call', {
-    name: 'caddy_create_plugin',
+    name: 'caddy_dev_server',
     arguments: {
-      name: 'visitor-counter',
-      directory: './caddy-plugins',
-      module_path: 'github.com/example/visitor-counter',
-      description: 'A plugin that tracks and displays visitor counts',
-      author: 'Claude Code Demo'
+      caddy_binary: './caddy-with-visitor-counter',
+      config_file: './examples/caddy-plugins/visitor-counter/Caddyfile.example',
+      port: 8080
     }
   });
 }, 200);

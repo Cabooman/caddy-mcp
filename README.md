@@ -145,6 +145,9 @@ npm run dev
 
 # Start server
 npm start
+
+# Run tests
+npm test
 ```
 
 ## Examples
