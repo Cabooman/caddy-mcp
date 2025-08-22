@@ -104,6 +104,82 @@ const tools: Tool[] = [
       required: [],
     },
   },
+  {
+    name: 'caddy_deploy_plugin',
+    description: 'Deploy plugin to production by safely replacing Caddy binary with backup',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        plugin_path: {
+          type: 'string',
+          description: 'Path to the plugin directory to deploy',
+        },
+        caddy_binary: {
+          type: 'string',
+          description: 'Path to current Caddy binary to replace',
+          default: '/usr/bin/caddy',
+        },
+        backup_dir: {
+          type: 'string',
+          description: 'Directory to store backup of current binary',
+          default: '/opt/caddy/backups',
+        },
+        validate_config: {
+          type: 'string',
+          description: 'Path to Caddyfile to validate with new binary',
+        },
+      },
+      required: ['plugin_path'],
+    },
+  },
+  {
+    name: 'caddy_backup_list',
+    description: 'Manage Caddy binary backups (backup, restore, list)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['backup', 'restore', 'list'],
+          description: 'Action to perform: backup current binary, restore from backup, or list backups',
+        },
+        caddy_binary: {
+          type: 'string',
+          description: 'Path to Caddy binary to backup or restore to',
+          default: '/usr/bin/caddy',
+        },
+        backup_dir: {
+          type: 'string',
+          description: 'Directory containing backups',
+          default: '/opt/caddy/backups',
+        },
+        restore_name: {
+          type: 'string',
+          description: 'Name of backup to restore (required for restore action)',
+        },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'caddy_validate_config',
+    description: 'Validate Caddy configuration file with specified binary',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        config_file: {
+          type: 'string',
+          description: 'Path to Caddyfile or JSON config to validate',
+        },
+        caddy_binary: {
+          type: 'string',
+          description: 'Path to Caddy binary to use for validation',
+          default: 'caddy',
+        },
+      },
+      required: ['config_file'],
+    },
+  },
 ];
 
 // Plugin template files
@@ -274,6 +350,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await buildPlugin(args);
       case 'caddy_dev_server':
         return await startDevServer(args);
+      case 'caddy_deploy_plugin':
+        return await deployPlugin(args);
+      case 'caddy_backup_list':
+        return await manageBackups(args);
+      case 'caddy_validate_config':
+        return await validateConfig(args);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -432,6 +514,275 @@ To stop the server, use: ${cmd} stop`,
       },
     ],
   };
+}
+
+async function deployPlugin(args: any) {
+  const { plugin_path, caddy_binary = '/usr/bin/caddy', backup_dir = '/opt/caddy/backups', validate_config } = args;
+  
+  if (!await fs.pathExists(plugin_path)) {
+    throw new Error(`Plugin path does not exist: ${plugin_path}`);
+  }
+  
+  if (!await fs.pathExists(caddy_binary)) {
+    throw new Error(`Caddy binary not found: ${caddy_binary}`);
+  }
+  
+  const absolutePluginPath = path.resolve(plugin_path);
+  const absoluteCaddyPath = path.resolve(caddy_binary);
+  const absoluteBackupDir = path.resolve(backup_dir);
+  
+  // Ensure backup directory exists
+  await fs.ensureDir(absoluteBackupDir);
+  
+  // Create timestamp for backup
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupName = `caddy-backup-${timestamp}`;
+  const backupPath = path.join(absoluteBackupDir, backupName);
+  
+  // Build new binary with plugin
+  const tempBinaryPath = path.join(absoluteBackupDir, `caddy-new-${timestamp}`);
+  
+  try {
+    // Check if xcaddy is available
+    execSync('xcaddy version', { stdio: 'pipe' });
+  } catch (error) {
+    throw new Error('xcaddy is not installed. Please install it from https://github.com/caddyserver/xcaddy');
+  }
+  
+  // Read go.mod to get module path
+  const goModPath = path.join(absolutePluginPath, 'go.mod');
+  if (!await fs.pathExists(goModPath)) {
+    throw new Error(`go.mod not found in ${absolutePluginPath}`);
+  }
+  
+  const goModContent = await fs.readFile(goModPath, 'utf8');
+  const moduleMatch = goModContent.match(/^module (.+)$/m);
+  if (!moduleMatch) {
+    throw new Error('Could not find module path in go.mod');
+  }
+  const modulePath = moduleMatch[1];
+  
+  // Build new Caddy with plugin
+  const buildCmd = `xcaddy build latest --output ${tempBinaryPath} --with ${modulePath}=${absolutePluginPath}`;
+  
+  try {
+    execSync(buildCmd, { encoding: 'utf8' });
+  } catch (error) {
+    throw new Error(`Failed to build Caddy with plugin: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  
+  // Validate configuration if provided
+  if (validate_config) {
+    if (!await fs.pathExists(validate_config)) {
+      throw new Error(`Config file not found: ${validate_config}`);
+    }
+    
+    try {
+      execSync(`${tempBinaryPath} validate --config ${validate_config}`, { encoding: 'utf8' });
+    } catch (error) {
+      // Clean up temp binary
+      await fs.remove(tempBinaryPath);
+      throw new Error(`Configuration validation failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  
+  // Backup current binary
+  await fs.copy(absoluteCaddyPath, backupPath);
+  
+  // Replace with new binary
+  await fs.copy(tempBinaryPath, absoluteCaddyPath);
+  
+  // Clean up temp binary
+  await fs.remove(tempBinaryPath);
+  
+  return {
+    content: [
+      {
+        type: 'text',
+        text: `Successfully deployed plugin to production!
+
+Plugin: ${absolutePluginPath}
+Original binary backed up to: ${backupPath}
+New binary deployed to: ${absoluteCaddyPath}
+${validate_config ? `Configuration validated: ${validate_config}` : ''}
+
+⚠️  IMPORTANT: You need to restart Caddy for the changes to take effect:
+
+  # For systemd:
+  sudo systemctl restart caddy
+  
+  # For Docker:
+  docker-compose restart caddy
+  
+  # Manual restart:
+  sudo pkill caddy && sudo ${absoluteCaddyPath} run --config /path/to/Caddyfile
+
+To rollback if needed:
+  Use caddy_backup_list with action "restore" and restore_name "${backupName}"`,
+      },
+    ],
+  };
+}
+
+async function manageBackups(args: any) {
+  const { action, caddy_binary = '/usr/bin/caddy', backup_dir = '/opt/caddy/backups', restore_name } = args;
+  
+  const absoluteBackupDir = path.resolve(backup_dir);
+  const absoluteCaddyPath = path.resolve(caddy_binary);
+  
+  await fs.ensureDir(absoluteBackupDir);
+  
+  switch (action) {
+    case 'list':
+      try {
+        const backups = await fs.readdir(absoluteBackupDir);
+        const caddyBackups = backups.filter(f => f.startsWith('caddy-backup-'));
+        
+        if (caddyBackups.length === 0) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `No Caddy backups found in ${absoluteBackupDir}`,
+              },
+            ],
+          };
+        }
+        
+        const backupDetails = await Promise.all(
+          caddyBackups.map(async (backup) => {
+            const backupPath = path.join(absoluteBackupDir, backup);
+            const stats = await fs.stat(backupPath);
+            return `${backup} (${stats.mtime.toISOString()}, ${Math.round(stats.size / 1024 / 1024)}MB)`;
+          })
+        );
+        
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Available Caddy backups in ${absoluteBackupDir}:
+
+${backupDetails.map(detail => `  - ${detail}`).join('\n')}
+
+To restore a backup, use:
+  caddy_backup_list with action "restore" and restore_name "backup-name"`,
+            },
+          ],
+        };
+      } catch (error) {
+        throw new Error(`Failed to list backups: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      
+    case 'backup':
+      if (!await fs.pathExists(absoluteCaddyPath)) {
+        throw new Error(`Caddy binary not found: ${absoluteCaddyPath}`);
+      }
+      
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupName = `caddy-backup-${timestamp}`;
+      const backupPath = path.join(absoluteBackupDir, backupName);
+      
+      try {
+        await fs.copy(absoluteCaddyPath, backupPath);
+        
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Successfully created backup!
+
+Source: ${absoluteCaddyPath}
+Backup: ${backupPath}
+
+Backup name for restore: ${backupName}`,
+            },
+          ],
+        };
+      } catch (error) {
+        throw new Error(`Failed to create backup: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      
+    case 'restore':
+      if (!restore_name) {
+        throw new Error('restore_name is required for restore action');
+      }
+      
+      const restorePath = path.join(absoluteBackupDir, restore_name);
+      
+      if (!await fs.pathExists(restorePath)) {
+        throw new Error(`Backup not found: ${restorePath}`);
+      }
+      
+      try {
+        await fs.copy(restorePath, absoluteCaddyPath);
+        
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Successfully restored Caddy binary!
+
+Restored from: ${restorePath}
+Restored to: ${absoluteCaddyPath}
+
+⚠️  IMPORTANT: You need to restart Caddy for the changes to take effect:
+
+  # For systemd:
+  sudo systemctl restart caddy
+  
+  # For Docker:
+  docker-compose restart caddy
+  
+  # Manual restart:
+  sudo pkill caddy && sudo ${absoluteCaddyPath} run --config /path/to/Caddyfile`,
+            },
+          ],
+        };
+      } catch (error) {
+        throw new Error(`Failed to restore backup: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      
+    default:
+      throw new Error(`Unknown action: ${action}. Use 'backup', 'restore', or 'list'`);
+  }
+}
+
+async function validateConfig(args: any) {
+  const { config_file, caddy_binary = 'caddy' } = args;
+  
+  if (!await fs.pathExists(config_file)) {
+    throw new Error(`Config file not found: ${config_file}`);
+  }
+  
+  const absoluteConfigPath = path.resolve(config_file);
+  
+  // Check if specified caddy binary exists (if it's a path)
+  if (caddy_binary.includes('/') && !await fs.pathExists(caddy_binary)) {
+    throw new Error(`Caddy binary not found: ${caddy_binary}`);
+  }
+  
+  try {
+    const validateCmd = `${caddy_binary} validate --config ${absoluteConfigPath}`;
+    const output = execSync(validateCmd, { encoding: 'utf8' });
+    
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `✅ Configuration is valid!
+
+Config file: ${absoluteConfigPath}
+Validated with: ${caddy_binary}
+
+Validation output:
+${output || 'Configuration syntax is valid.'}`,
+        },
+      ],
+    };
+  } catch (error) {
+    throw new Error(`Configuration validation failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 // Start the server

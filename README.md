@@ -49,10 +49,15 @@ Claude will:
 
 ## Features
 
-### Core Plugin Development Tools
+### Plugin Development Tools
 - **caddy_create_plugin**: Create new Caddy plugins with proper Go module structure
 - **caddy_build_plugin**: Build Caddy with custom plugins using xcaddy
 - **caddy_dev_server**: Start development server with plugin for testing
+
+### Production Deployment Tools
+- **caddy_deploy_plugin**: Safely deploy plugins to production with automatic backup
+- **caddy_backup_list**: Manage Caddy binary backups (backup, restore, list)
+- **caddy_validate_config**: Validate Caddy configuration files
 
 ## Installation
 
@@ -156,6 +161,94 @@ Starts a Caddy development server with the custom plugin.
 - `config_file`: Path to Caddyfile or JSON config
 - `port`: Port to run the server on (default: 8080)
 - `admin_port`: Admin API port (default: 2019)
+
+### caddy_deploy_plugin
+
+Safely deploy a plugin to production by building and replacing the Caddy binary with automatic backup.
+
+**Parameters:**
+- `plugin_path` (required): Path to the plugin directory to deploy
+- `caddy_binary`: Path to current Caddy binary to replace (default: "/usr/bin/caddy")
+- `backup_dir`: Directory to store backup of current binary (default: "/opt/caddy/backups")
+- `validate_config`: Path to Caddyfile to validate with new binary
+
+**Safety features:**
+- Automatically backs up current binary with timestamp
+- Validates configuration before deployment (if config provided)
+- Builds new binary with plugin using xcaddy
+- Provides clear restart instructions
+
+### caddy_backup_list
+
+Manage Caddy binary backups for safe rollbacks.
+
+**Parameters:**
+- `action` (required): "backup", "restore", or "list"
+- `caddy_binary`: Path to Caddy binary (default: "/usr/bin/caddy")
+- `backup_dir`: Directory containing backups (default: "/opt/caddy/backups")
+- `restore_name`: Name of backup to restore (required for restore action)
+
+**Actions:**
+- **backup**: Create timestamped backup of current binary
+- **list**: Show all available backups with dates and sizes
+- **restore**: Restore from specific backup
+
+### caddy_validate_config
+
+Validate Caddy configuration file syntax.
+
+**Parameters:**
+- `config_file` (required): Path to Caddyfile or JSON config to validate
+- `caddy_binary`: Path to Caddy binary to use for validation (default: "caddy")
+
+**Features:**
+- Tests configuration syntax without starting server
+- Works with custom Caddy binaries (with plugins)
+- Shows detailed error messages for invalid configs
+
+## Production Deployment Workflow
+
+### Deploying a Plugin to Homelab
+
+1. **Develop and test your plugin:**
+   ```
+   caddy_create_plugin: Create plugin structure
+   caddy_build_plugin: Build and test locally
+   caddy_dev_server: Test with development server
+   ```
+
+2. **Validate before deployment:**
+   ```
+   caddy_validate_config:
+   - config_file: "/etc/caddy/Caddyfile"
+   - caddy_binary: "./caddy-with-plugin"
+   ```
+
+3. **Deploy safely:**
+   ```
+   caddy_deploy_plugin:
+   - plugin_path: "./my-plugin" 
+   - caddy_binary: "/usr/bin/caddy"
+   - backup_dir: "/opt/caddy/backups"
+   - validate_config: "/etc/caddy/Caddyfile"
+   ```
+
+4. **Restart Caddy service:**
+   ```bash
+   sudo systemctl restart caddy
+   # OR
+   docker-compose restart caddy
+   ```
+
+5. **If something goes wrong:**
+   ```
+   caddy_backup_list:
+   - action: "list"  # Find the backup to restore
+   
+   caddy_backup_list:
+   - action: "restore"
+   - restore_name: "caddy-backup-2024-08-22T10-30-00-000Z"
+   ```
 
 ## Plugin Template
 
