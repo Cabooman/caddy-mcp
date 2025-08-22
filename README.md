@@ -2,6 +2,51 @@
 
 A Model Context Protocol (MCP) server for Caddy web server management and plugin development.
 
+## Getting Started
+
+### Quick Start with Claude Code
+
+1. **Clone and setup the server:**
+   ```bash
+   git clone https://github.com/Cabooman/caddy-mcp.git
+   cd caddy-mcp
+   npm install
+   npm run build
+   ```
+
+2. **Install xcaddy (required for plugin building):**
+   ```bash
+   go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+   ```
+
+3. **Add to your Claude Code MCP configuration:**
+   ```json
+   {
+     "mcpServers": {
+       "caddy": {
+         "command": "node",
+         "args": ["/path/to/caddy-mcp/dist/index.js"]
+       }
+     }
+   }
+   ```
+
+4. **Try it out in Claude Code:**
+   - Ask Claude to "create a simple hello world Caddy plugin"
+   - Watch as it uses the MCP tools to generate, build, and configure your plugin
+   - Test the example visitor-counter plugin in `examples/`
+
+### First Plugin in 30 Seconds
+
+Once connected to Claude Code, try this:
+> "Create a Caddy plugin called 'hello' that adds a custom header to all requests"
+
+Claude will:
+1. Generate the complete plugin structure
+2. Show you how to build it with xcaddy
+3. Provide a working Caddyfile configuration
+4. Explain how to test it locally
+
 ## Features
 
 ### Core Plugin Development Tools
